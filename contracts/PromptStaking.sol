@@ -36,9 +36,9 @@ contract PromptStaking is Ownable, ReentrancyGuard {
     address public immutable promptNFT;
     address public immutable memesNFT;
 
-    mapping(address => StakeInfo[]) public userStakes;
-    mapping(address => uint256) public pendingReward;
-    mapping(address => uint256) public userWeight;
+    mapping(address => StakeInfo[]) public userStakes;//用户质押NFT
+    mapping(address => uint256) public pendingReward;//用户待领取奖励
+    mapping(address => uint256) public userWeight;//用户权重
 
     uint256 public totalWeight;
 
@@ -49,7 +49,7 @@ contract PromptStaking is Ownable, ReentrancyGuard {
     event Unstaked(address indexed user, address indexed nft, uint256 tokenId);
     event Claimed(address indexed user, uint256 amount);
 
-    constructor(address _ptc, address _memory, address _prompt, address _memes) {
+    constructor(address _ptc, address _memory, address _prompt, address _memes) Ownable(msg.sender) {
         ptc = IERC20(_ptc);
         memoryNFT = _memory;
         promptNFT = _prompt;
@@ -108,7 +108,6 @@ contract PromptStaking is Ownable, ReentrancyGuard {
 
         IERC721(nft).transferFrom(msg.sender, address(this), tokenId);
         
-        _updateReward(msg.sender); // 前置奖励更新
         uint256 weight = _getWeight(nft);
         
         userStakes[msg.sender].push(StakeInfo(nft, tokenId, weight, block.timestamp));
@@ -147,24 +146,29 @@ contract PromptStaking is Ownable, ReentrancyGuard {
 
      //解押单种NFT
     function unstake(address nft) external onlySupportedNFT(nft) {
-    _updateReward(msg.sender);
+        _updateReward(msg.sender);
 
-    StakeInfo[] storage stakes = userStakes[msg.sender];
-    uint256 len = stakes.length;
+        StakeInfo[] storage stakes = userStakes[msg.sender];
+        uint256 len = stakes.length;
 
-    for (uint256 i = len; i > 0; i--) {
-        uint256 idx = i - 1;
-        if (stakes[idx].nft == nft) {
-            uint256 weight = stakes[idx].weight;
-            totalWeight -= weight;
-            userWeight[msg.sender] -= weight;
+        for (uint256 i = len; i > 0; i--) {
+            uint256 idx = i - 1;
+            if (stakes[idx].nft == nft) {
+                uint256 tokenId = stakes[idx].tokenId; // 先保存tokenId
+                uint256 weight = stakes[idx].weight;
+                totalWeight -= weight;
+                userWeight[msg.sender] -= weight;
 
-            IERC721(nft).transferFrom(address(this), msg.sender, stakes[idx].tokenId);
+                IERC721(nft).transferFrom(address(this), msg.sender, stakes[idx].tokenId);
 
-            stakes[idx] = stakes[stakes.length - 1];
-            stakes.pop();
+                 // 如果是最后一个元素，直接pop
+                if (idx != stakes.length - 1) {
+                    stakes[idx] = stakes[stakes.length - 1];
+                }
+                stakes.pop();
 
-            emit Unstaked(msg.sender, nft, stakes[idx].tokenId);
+                emit Unstaked(msg.sender, nft, tokenId);
+            }
         }
     }
 
@@ -234,6 +238,29 @@ contract PromptStaking is Ownable, ReentrancyGuard {
         emit Claimed(msg.sender, reward);
     }
 
+    // 获取用户当前可领取PTC
+    function claimable(address user) external view returns (uint256) {
+        // 手动计算用户上次领取奖励后的周期数，并据此计算应得奖励
+        uint256 currentPeriod = block.timestamp / PERIOD_DURATION;
+        uint256 lastClaimedPeriod = userLastClaimedTimestamp[user] / PERIOD_DURATION;
+        
+        if (lastClaimedPeriod == 0) {
+            // 如果用户从未领取过奖励，则将lastClaimedPeriod设置为当前周期
+            lastClaimedPeriod = currentPeriod;
+        }
+        
+        if (currentPeriod > lastClaimedPeriod && totalWeight > 0) {
+            // 计算用户应得的奖励
+            uint256 periods = currentPeriod - lastClaimedPeriod;
+            uint256 totalReward = _getRewardPerPeriod() * periods;
+            return (userWeight[user] * totalReward) / totalWeight;
+        } else {
+            // 如果用户在当前周期之前已经领取过奖励，或者没有质押任何NFT，则返回pendingReward中的值
+            return pendingReward[user];
+        }
+    }
+
+
     // 获取用户当前权重
     function getUserWeight(address user) external view returns (uint256) {
         return userWeight[user];
@@ -257,23 +284,23 @@ contract PromptStaking is Ownable, ReentrancyGuard {
 
     // 救援合约内误转入的ERC20代币（禁止PTC）
     function rescueERC20(address token, address to, uint256 amount) external onlyOwner {
-        require(token != address(ptc), "禁止提取PTC代币");
+        require(token != address(ptc), "PTC token withdrawal is prohibited");
         IERC20 erc20 = IERC20(token);
         uint256 balance = erc20.balanceOf(address(this));
-        require(amount <= balance, "金额超出余额");
+        require(amount <= balance, "Amount exceeds balance");
         erc20.transfer(to, amount);
     }
 
     // 救援合约内误转入的ETH
     function rescueETH(address payable to, uint256 amount) external onlyOwner {
-        require(address(this).balance >= amount, "ETH余额不足");
+        require(address(this).balance >= amount, "Insufficient balance");
         (bool success, ) = to.call{value: amount}("");
-        require(success, "ETH转账失败");
+        require(success, "Transfer failed");
     }
 
     // 救援合约内误转入的ERC721 NFT（禁止三种质押NFT）
     function rescueERC721(address nft, address to, uint256 tokenId) external onlyOwner {
-        require(nft != promptNFT && nft != memoryNFT && nft != memesNFT, "禁止提取质押NFT");
+        require(nft != promptNFT && nft != memoryNFT && nft != memesNFT, "Withdrawal of staked NFTs is prohibited");
         IERC721(nft).transferFrom(address(this), to, tokenId);
     }
 
