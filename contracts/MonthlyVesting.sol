@@ -218,3 +218,4 @@ contract MonthlyVesting is ReentrancyGuard {
         return token.balanceOf(address(this));
     }
 }
+                
