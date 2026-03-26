@@ -14,7 +14,7 @@ if (process.env.REPORT_COVERAGE) {
  */
 module.exports = {
   solidity: {
-    version: '0.8.20',
+    version: '0.8.11',
     settings: {
       optimizer: {
         enabled: true,
