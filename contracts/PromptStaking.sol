@@ -409,7 +409,7 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         uint256 remaining = initialRemaining;
         uint256 emitted = 0;
 
-        for (uint256 y = 0; y < maxYears && remaining > 0; y++) {
+        for (uint256 y = 0; y <= maxYears && remaining > 0; y++) {
             uint256 releaseThisYear = remaining * FRACTION / 10000;
             if (releaseThisYear == 0) break;
             uint256 periodStart = start6 + y * periodDuration;
