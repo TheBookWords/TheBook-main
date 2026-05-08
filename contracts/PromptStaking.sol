@@ -3,7 +3,7 @@
 // NFT质押合约 V4.0
 
 // 支持1种NFT（Prompt），按权重分配PTC奖励。
-// 质押挖矿的总数量：30亿
+// 质押挖矿的总数量：5亿
 // 释放规则：第一年18%，第二年16%，第三年14%，第四年12%，第五年10%，从第六年开始把剩余数量（30%）和提前注入的数量按照每年释放50%逐年减半的逻辑释放。
 // 奖励计算：每次计算时使用当前基数乘以（已销售NFT数量/NFT发行总数）的比例，已销售数量 = NFT发行总数 - 销售地址持有量。未销售数量对应的比例进入缓冲池，缓冲池中部分数量将在第六年开始前注入至合约，参与第六年之后的按年减半释放。
 // 奖励分配：用户收益 = 总释放奖励 × 销售比例，剩余部分进入缓冲池。
@@ -57,6 +57,10 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     error EmptyUserList();
     error NotDistributor();
     error UnsolicitedNFTTransfer();
+    error NotInWhitelist();
+
+    // --------------- 允许质押用户白名单 ----------------
+    mapping(address => bool) public stakeWhitelist;
 
     // -------------------- 质押结构体 --------------------
     /// @notice 用户单个NFT质押信息
@@ -85,13 +89,13 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     IERC20 public immutable ptc;           // PTC代币合约
     address public immutable promptNFT;    // Prompt NFT合约地址
 
-    uint256 public constant TOTAL_REWARD = 3000000000 ether; // 总奖励 30亿
+    uint256 public constant TOTAL_REWARD = 500000000 ether; // 总奖励 5亿
 
-    uint256 public constant REMAINING_AFTER_5_YEARS = 900000000 ether; // 前5年释放21亿，剩余9亿用于第6年后动态释放
+    uint256 public constant REMAINING_AFTER_5_YEARS = 150000000 ether; // 前5年释放21亿，剩余9亿用于第6年后动态释放
     uint256 public constant FRACTION = 5000; // 50% = 5000/10000，保持不变，第六年开始每年释放年初剩余的50%
     uint256 public constant MAX_DYNAMIC_YEARS = 64; // 第6年后动态释放的最大年数上限，防止循环耗尽gas
     uint256 public constant MAX_FEE_RATE = 10000; // 手续费率上限 100%
-    
+
     uint256 public totalAdditionalReward; // 累计额外注入总量
 
     // 释放周期：前5年固定，第6年开始动态释放
@@ -140,6 +144,12 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         _;
     }
 
+    // 白名单校验修饰符
+    modifier onlyWhitelisted() {
+        if (!stakeWhitelist[msg.sender]) revert NotInWhitelist();
+        _;
+    }
+
     // -------------------- 紧急控制参数 --------------------
     bool public salesRatioUpdatePaused; // 销售比例更新暂停标志
 
@@ -173,7 +183,11 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     event FeeRecipientSet(address indexed admin, address newFeeRecipient);
     event PlatformPaymentReceiverSet(address indexed admin, address newReceiver);
     event PlatformCharged(address indexed user, address indexed receiver, uint256 amount);
-    
+    event WhitelistAdded(address indexed account);
+    event WhitelistRemoved(address indexed account);
+    event WhitelistBatchAdded(address[] accounts);
+    event WhitelistBatchRemoved(address[] accounts);
+
     // -------------------- 构造函数 --------------------
     /// @notice 构造函数，初始化PTC和NFT合约地址及奖励起始时间
     /// @param _ptc PTC代币地址
@@ -220,19 +234,61 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         // 奖励永远释放，无结束时间
 
         // 初始化各年释放总量
-        // 第一年: 18% = 5.4亿
-        schedulePeriodTotals[0] = 540000000 ether;
-        // 第二年: 16% = 4.8亿
-        schedulePeriodTotals[1] = 480000000 ether;
-        // 第三年: 14% = 4.2亿
-        schedulePeriodTotals[2] = 420000000 ether;
-        // 第四年: 12% = 3.6亿
-        schedulePeriodTotals[3] = 360000000 ether;
-        // 第五年: 10% = 3亿
-        schedulePeriodTotals[4] = 300000000 ether;
+        // 第一年: 18% = 0.9亿
+        schedulePeriodTotals[0] = 90000000 ether;
+        // 第二年: 16% = 0.8亿
+        schedulePeriodTotals[1] = 80000000 ether;
+        // 第三年: 14% = 0.7亿
+        schedulePeriodTotals[2] = 70000000 ether;
+        // 第四年: 12% = 0.6亿
+        schedulePeriodTotals[3] = 60000000 ether;
+        // 第五年: 10% = 0.5亿
+        schedulePeriodTotals[4] = 50000000 ether;
 
         cachedSalesRatio = _computeProtectedSalesRatio();
         lastSalesRatioUpdate = block.timestamp;
+    }
+
+    // -------------------- 白名单管理函数（仅Owner） --------------------
+    /// @notice 添加单个地址到白名单
+    function addToWhitelist(address account) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        stakeWhitelist[account] = true;
+        emit WhitelistAdded(account);
+    }
+
+    /// @notice 从白名单移除单个地址
+    function removeFromWhitelist(address account) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        stakeWhitelist[account] = false;
+        emit WhitelistRemoved(account);
+    }
+
+    /// @notice 批量添加白名单
+    function batchAddToWhitelist(address[] calldata accounts) external onlyOwner {
+        uint256 len = accounts.length;
+        if (len == 0) revert EmptyUserList();
+        for (uint256 i = 0; i < len; i++) {
+            if (accounts[i] == address(0)) revert ZeroAddress();
+            stakeWhitelist[accounts[i]] = true;
+        }
+        emit WhitelistBatchAdded(accounts);
+    }
+
+    /// @notice 批量移除白名单
+    function batchRemoveFromWhitelist(address[] calldata accounts) external onlyOwner {
+        uint256 len = accounts.length;
+        if (len == 0) revert EmptyUserList();
+        for (uint256 i = 0; i < len; i++) {
+            if (accounts[i] == address(0)) revert ZeroAddress();
+            stakeWhitelist[accounts[i]] = false;
+        }
+        emit WhitelistBatchRemoved(accounts);
+    }
+
+    /// @notice 查询账户是否在白名单内
+    function isWhitelisted(address account) external view returns (bool) {
+        return stakeWhitelist[account];
     }
 
     // -------------------- 辅助查询函数 ------------------
@@ -455,7 +511,7 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
 
     // ========== 质押解押相关 ==========
     /// @notice 质押单个NFT
-    function stake(uint256 tokenId) external nonReentrant whenNotPaused {
+    function stake(uint256 tokenId) external nonReentrant whenNotPaused onlyWhitelisted {
         _updateReward(msg.sender);
         if (nftOwners[tokenId] != address(0)) revert AlreadyStaked();
         uint256 idx = users[msg.sender].stakes.length;
@@ -471,7 +527,7 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     }
 
     /// @notice 批量质押NFT
-    function stakeBatch(uint256[] calldata tokenIds) external nonReentrant whenNotPaused {
+    function stakeBatch(uint256[] calldata tokenIds) external nonReentrant whenNotPaused onlyWhitelisted {
         if (tokenIds.length == 0) revert NoTokenIds();
         _updateReward(msg.sender);
         for (uint256 i = 0; i < tokenIds.length; i++) {
@@ -497,7 +553,7 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         emit Unstaked(msg.sender, tokenId);
         IERC721(promptNFT).safeTransferFrom(address(this), msg.sender, tokenId);
     }
-    
+
     /// @notice 批量解押NFT
     /// @dev 循环中每次safeTransferFrom回调时，外部view调用可能观察到中间状态（已处理的NFT已移除，未处理的仍存在）。
     ///      nonReentrant已阻止状态变更重入，集成方应避免在onERC721Received回调中依赖本合约的view快照。
@@ -880,7 +936,7 @@ contract PromptStaking is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         uint256 start6 = startRewardTimestamp + 5 * SCHEDULE_PERIOD_DURATION;
         if (block.timestamp > start6) revert TooLateForAdditional();
         _updateGlobal();
-        
+
         totalAdditionalReward += amount;
         ptc.safeTransferFrom(msg.sender, address(this), amount);
         emit AdditionalRewardAdded(msg.sender, amount);
