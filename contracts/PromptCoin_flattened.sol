@@ -724,7 +724,7 @@ pragma solidity ^0.8.20;
 
 // PromptCoin Contract
 // 总发行量: 100亿 (10,000,000,000) PTC
-contract TmpPromptCoin is ERC20, Ownable {
+contract PromptCoin is ERC20, Ownable {
     constructor() ERC20("PromptCoin", "PTC") Ownable(msg.sender){
         // mint total supply = 10,000,000,000 * 10^18
         _mint(msg.sender, 10_000_000_000 * 1e18);
