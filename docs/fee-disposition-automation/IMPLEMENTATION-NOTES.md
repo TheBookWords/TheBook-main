@@ -48,8 +48,9 @@ pair      = liquidity − swap
 ## 4. PRD 悬而未决点的处理
 
 1. **激励从哪里出** → PTC、拆分前扣除。理由：剩余部分严格 30/70，事件数字可直接对账，不用再从 USDT 里切一刀。
-2. **`lpRecipient`** → 构造函数必填、非零；部署脚本只接受黑洞地址或有代码的合约，EOA 需显式 `ALLOW_EOA_LP_RECIPIENT=true`（只用于测试网）。
-   **主网部署前必须先定 LP 销毁 vs 锁仓** —— 这是 PRD 明确的前置条件，合约本身不做这个决定。
+2. **`lpRecipient`** → **已决定（Matt，2026-09-04）：LP 销毁，`lpRecipient = 0x…dEaD`。** LP 一经打入即永久不可取回，
+   流动性深度在链上可证明。构造函数必填、非零；部署脚本只接受黑洞地址或有代码的合约，EOA 需显式
+   `ALLOW_EOA_LP_RECIPIENT=true`（只用于测试网）。个人 MetaMask 地址被明确否决：那等于「一个人随时能撤走流动性」，与 PRD 目的相反。
 3. **`threshold` / `slippageBps` 默认值** → 脚本默认 50,000 PTC / 150 bps，见 §5。
 4. **MEV** → `slippageBps` + `maxBatch` + `minInterval` + 调用者可传 `minUsdtOut`。**必须说清楚的剩余风险**：
    合约在同一笔交易里先报价再 swap，所以 `slippageBps` 挡不住三明治（攻击者先推价，我们按推过的价报价、按推过的价接受）。
@@ -105,7 +106,7 @@ HANDOFF 里「gas ≈ $0.3–1」的估算已过时（BSC Maxwell 之后 gas pri
 - USDT 结转、`burnBps = 100%`、pause、onlyOwner、Ownable2Step、参数校验、rescue 限制、授权归零 ✔
 - **主网 fork 端到端**：从分发钱包转 60k PTC 进合约，随机 EOA 调用 → 黑洞地址增量、池子 PTC 与 k 变深、LP 到 `lpRecipient`、合约只剩尘埃 ✔
 
-**尚未做**（需要 Matt / 工程师）：测试网部署 + BscScan 验证；后端 cron 接入；审计。
+**尚未做**（需要 Matt / 工程师）：测试网部署 + BscScan 验证；后端 cron 接入；审计。`lpRecipient` 已定为黑洞地址，不再是阻塞项。
 
 ## 9. Slither 0.11.6 结果与分类（`slither . --filter-paths "lib/|test/|script/" --exclude-dependencies`）
 

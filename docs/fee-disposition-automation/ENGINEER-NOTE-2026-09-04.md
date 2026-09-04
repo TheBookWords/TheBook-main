@@ -31,7 +31,7 @@
 工程师待办 / Engineer to-do
 ☐ 1. 审阅 src/FeeDispositionModule.sol（逐行；涉及资金自动流转，按 10-测试规范 §5.4 标准）
 ☐ 2. 用 vault 源码确认上面「资金来源」的三个问题，回复能否走「每日 claim 到模块」方案
-☐ 3. 决定 lpRecipient：LP 销毁（0x…dEaD）还是锁仓合约（给地址）。没定之前不部署主网
+☑ 3. lpRecipient 已定：LP 销毁，部署时 LP_RECIPIENT=0x000000000000000000000000000000000000dEaD（Matt 2026-09-04 拍板，无需再议）
 ☐ 4. 和 Matt 定阈值 / minIncentive 两个数（实现说明 §5 有经济性数据）
 ☐ 5. 在 service-thebook 加两个定时任务：(a) 每日 fee claim 到模块；(b) 每日 canTrigger() → 为 true 时 previewTrigger() 算 minUsdtOut 再发 trigger()。逻辑照 script/Trigger.s.sol；key 只从 nacos 取
 ☐ 6. 决定合约代码放哪个仓库（把本目录整体挪进去，保留提交记录即可）
@@ -73,7 +73,7 @@ The 15% redemption fee is only recorded in the DB (user_vptc_record.feeNumber); 
 Engineer to-do
 ☐ 1. Review src/FeeDispositionModule.sol line by line (it moves funds automatically; same bar as vault code)
 ☐ 2. Answer the three funding-path questions above against the vault source; confirm whether "daily claim to module" is viable
-☐ 3. Decide lpRecipient: LP burn (0x…dEaD) or a lock contract (provide the address). No mainnet deploy until decided
+☑ 3. lpRecipient decided: LP burn, deploy with LP_RECIPIENT=0x000000000000000000000000000000000000dEaD (Matt, 2026-09-04, settled)
 ☐ 4. Settle threshold / minIncentive with Matt (economics in implementation notes §5)
 ☐ 5. Add two scheduled jobs in service-thebook: (a) daily fee claim to the module; (b) daily canTrigger() → if true, previewTrigger() to compute minUsdtOut, then send trigger(). Mirror script/Trigger.s.sol; keys only from nacos
 ☐ 6. Decide which repo hosts the contract code (move this folder in wholesale, keep the history)
