@@ -14,6 +14,9 @@ contract MockPair is ERC20 {
     address public immutable token1;
     uint112 private reserve0;
     uint112 private reserve1;
+    uint32 private blockTimestampLast;
+    uint256 public price0CumulativeLast;
+    uint256 public price1CumulativeLast;
     uint256 public constant MINIMUM_LIQUIDITY = 1000;
 
     constructor(address a, address b) ERC20("Pancake LPs", "Cake-LP") {
@@ -21,12 +24,22 @@ contract MockPair is ERC20 {
     }
 
     function getReserves() external view returns (uint112, uint112, uint32) {
-        return (reserve0, reserve1, uint32(block.timestamp));
+        return (reserve0, reserve1, blockTimestampLast);
     }
 
+    /// @dev 与 UniswapV2Pair._update 一致：先按旧储备累加价格，再刷新储备
     function sync() public {
+        uint32 ts = uint32(block.timestamp);
+        unchecked {
+            uint32 elapsed = ts - blockTimestampLast;
+            if (elapsed > 0 && reserve0 != 0 && reserve1 != 0) {
+                price0CumulativeLast += (uint256(reserve1) * 2 ** 112 / reserve0) * elapsed;
+                price1CumulativeLast += (uint256(reserve0) * 2 ** 112 / reserve1) * elapsed;
+            }
+        }
         reserve0 = uint112(IERC20(token0).balanceOf(address(this)));
         reserve1 = uint112(IERC20(token1).balanceOf(address(this)));
+        blockTimestampLast = ts;
     }
 
     function mint(address to) external returns (uint256 liquidity) {
@@ -47,6 +60,7 @@ contract MockPair is ERC20 {
     }
 
     function swap(uint256 amount0Out, uint256 amount1Out, address to) external {
+        require(amount0Out > 0 || amount1Out > 0, "Pancake: INSUFFICIENT_OUTPUT_AMOUNT");
         if (amount0Out > 0) IERC20(token0).transfer(to, amount0Out);
         if (amount1Out > 0) IERC20(token1).transfer(to, amount1Out);
         sync();

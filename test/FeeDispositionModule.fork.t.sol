@@ -27,14 +27,17 @@ contract FeeDispositionModuleForkTest is Test {
         cfg = FeeDispositionModule.Config({
             threshold: 50_000e18,
             maxBatch: 0,
-            minIncentive: 150e18,
+            minIncentive: 30e18,
             burnBps: 3000,
             callerIncentiveBps: 30,
             slippageBps: 150,
-            minInterval: 3600
+            minInterval: 3600,
+            twapWindow: 1800,
+            maxTwapDeviationBps: 300
         });
         module = new FeeDispositionModule(owner, PTC, USDT, ROUTER, lpLock, cfg);
         assertEq(address(module.PAIR()), PAIR, "factory resolved the live pair");
+        vm.warp(block.timestamp + cfg.twapWindow);
     }
 
     function _fund(uint256 amount) internal {
@@ -78,6 +81,22 @@ contract FeeDispositionModuleForkTest is Test {
         assertEq(module.totalLpMinted(), IERC20(PAIR).balanceOf(lpLock) - lpBefore);
     }
 
+    function testFork_AtomicSandwichRejectedOnRealPool() public {
+        _fund(60_000e18);
+        ForkSandwich attacker = new ForkSandwich(module);
+        vm.prank(DISTRIBUTION_WALLET);
+        IERC20(PTC).transfer(address(attacker), 400_000e18);
+        vm.expectPartialRevert(FeeDispositionModule.PriceDeviatesFromTwap.selector);
+        attacker.attack(400_000e18);
+    }
+
+    function testFork_TwapViewMatchesSpotOnQuietPool() public view {
+        (uint256 twap, uint32 age) = module.twapPrice();
+        (uint256 rPtc, uint256 rUsdt) = _reserves();
+        assertGe(age, cfg.twapWindow);
+        assertApproxEqRel(twap, rUsdt * 2 ** 112 / rPtc, 0.02e18, "fork block is a snapshot; twap ~ spot");
+    }
+
     function testFork_RevertWhen_BelowThreshold() public {
         _fund(1_000e18);
         vm.prank(keeper);
@@ -85,12 +104,15 @@ contract FeeDispositionModuleForkTest is Test {
         module.trigger(0);
     }
 
-    function testFork_RevertWhen_BatchTooBigForPool() public {
-        // 2M PTC → 卖出 ~700k，约占池子 14%，价格冲击远超 1.5%：宁可 revert 也不砸池
+    function testFork_BigBacklogAutoCappedOnRealPool() public {
+        // 2M PTC 积压：一次卖出会砸池 ~14%。按真实储备自动封顶到 ~1.27% 冲击，剩余留到下一轮
         _fund(2_000_000e18);
+        uint256 cap = module.maxSafeBatch();
         vm.prank(keeper);
-        vm.expectPartialRevert(FeeDispositionModule.PriceImpactTooHigh.selector);
-        module.trigger(0);
+        FeeDispositionModule.Split memory s = module.trigger(0);
+        assertEq(s.batch, cap);
+        assertLt(cap, 300_000e18, "cap is a small fraction of the 5.1M pool");
+        assertGt(IERC20(PTC).balanceOf(address(module)), 1_700_000e18, "backlog carried");
     }
 
     function testFork_MaxBatchLetsBigBacklogDrainSafely() public {
@@ -102,5 +124,28 @@ contract FeeDispositionModuleForkTest is Test {
         vm.prank(keeper);
         FeeDispositionModule.Split memory s = module.trigger(0);
         assertEq(s.batch, 100_000e18);
+    }
+}
+
+interface IRouterLike {
+    function swapExactTokensForTokens(uint256, uint256, address[] calldata, address, uint256)
+        external
+        returns (uint256[] memory);
+}
+
+contract ForkSandwich {
+    FeeDispositionModule immutable module;
+
+    constructor(FeeDispositionModule m) {
+        module = m;
+    }
+
+    function attack(uint256 amount) external {
+        IERC20(module.PTC()).approve(address(module.ROUTER()), amount);
+        address[] memory path = new address[](2);
+        path[0] = address(module.PTC());
+        path[1] = address(module.USDT());
+        IRouterLike(address(module.ROUTER())).swapExactTokensForTokens(amount, 0, path, address(this), block.timestamp);
+        module.trigger(0);
     }
 }

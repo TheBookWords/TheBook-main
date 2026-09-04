@@ -46,9 +46,13 @@ contract FeeDispositionModuleTest is Test {
             burnBps: 3000,
             callerIncentiveBps: 30,
             slippageBps: 150,
-            minInterval: 3600
+            minInterval: 3600,
+            twapWindow: 1800,
+            maxTwapDeviationBps: 300
         });
         module = _deploy(cfg);
+        // 部署时记了第一个 TWAP 观测点，要等窗口过去才能触发
+        vm.warp(block.timestamp + cfg.twapWindow);
     }
 
     function _deploy(FeeDispositionModule.Config memory c) internal returns (FeeDispositionModule) {
@@ -252,12 +256,35 @@ contract FeeDispositionModuleTest is Test {
 
     // ───────────── 滑点 / 价格冲击 ─────────────
 
-    function test_RevertWhen_PriceImpactTooHigh() public {
-        // 2M PTC 的批次要卖出 ~700k，占池子 ~14%，远超 1.5%
+    function test_HugeBacklogIsAutoCappedNotStalled() public {
+        // 2M PTC 积压：若一次卖出会砸池 ~14%。合约按池子深度自动封顶，分多轮消化，而不是 revert 卡死
         _fund(2_000_000e18);
+        uint256 cap = module.maxSafeBatch();
+        assertLt(cap, 2_000_000e18);
         vm.prank(bob);
-        vm.expectPartialRevert(FeeDispositionModule.PriceImpactTooHigh.selector);
+        FeeDispositionModule.Split memory s = module.trigger(0);
+        assertEq(s.batch, cap, "batch == safe cap");
+        assertGe(ptc.balanceOf(address(module)), 2_000_000e18 - cap, "rest carried");
+        // 下一轮继续消化（TWAP 参考仍是部署时的干净价，自身冲击 ≤ 1.5% 在 3% 容忍内）
+        vm.warp(block.timestamp + cfg.minInterval);
+        vm.prank(bob);
         module.trigger(0);
+        assertEq(module.triggerCount(), 2);
+    }
+
+    function test_MaxSafeBatch_MatchesImpactBound() public view {
+        // 卖出恰好 cap 对应的 swap 量时，报价相对现价的劣化应 ≈ slippageBps（略小于，因有 0.1% 余量）
+        uint256 cap = module.maxSafeBatch();
+        FeeDispositionModule.Split memory s = module.computeSplit(cap, 0, cfg);
+        (uint256 rP, uint256 rU) = _reserves();
+        address[] memory path = new address[](2);
+        path[0] = address(ptc);
+        path[1] = address(usdt);
+        uint256 quoted = router.getAmountsOut(s.swap, path)[1];
+        uint256 spotOut = s.swap * rU / rP;
+        uint256 shortfallBps = (spotOut - quoted) * BPS / spotOut;
+        assertLe(shortfallBps, cfg.slippageBps);
+        assertGe(shortfallBps, cfg.slippageBps - 5);
     }
 
     function test_RevertWhen_RouterUnderdeliversSwap() public {
@@ -308,6 +335,7 @@ contract FeeDispositionModuleTest is Test {
             new FeeDispositionModule(owner, address(evil), address(usdt), address(router), lpLock, cfg);
         evil.mint(address(m), 60_000e18);
         evil.arm(address(m));
+        vm.warp(block.timestamp + cfg.twapWindow);
 
         vm.prank(bob);
         m.trigger(0);
@@ -440,12 +468,24 @@ contract FeeDispositionModuleTest is Test {
         vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "slippageBps>max"));
         module.setConfig(c);
         c = cfg;
-        c.minIncentive = cfg.threshold;
-        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "minIncentive>=threshold"));
+        c.minIncentive = cfg.threshold * 500 / BPS + 1;
+        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "minIncentive>5%threshold"));
         module.setConfig(c);
         c = cfg;
-        c.maxBatch = cfg.minIncentive;
-        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "minIncentive>=maxBatch"));
+        c.maxBatch = cfg.minIncentive * 19; // 150 > 5% of 2850
+        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "minIncentive>5%maxBatch"));
+        module.setConfig(c);
+        c = cfg;
+        c.slippageBps = 49;
+        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "slippageBps<min"));
+        module.setConfig(c);
+        c = cfg;
+        c.maxTwapDeviationBps = 5001;
+        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "twapDeviation>max"));
+        module.setConfig(c);
+        c = cfg;
+        c.maxTwapDeviationBps = 0;
+        vm.expectRevert(abi.encodeWithSelector(FeeDispositionModule.InvalidConfig.selector, "twapDeviation=0"));
         module.setConfig(c);
         vm.stopPrank();
     }
@@ -473,11 +513,128 @@ contract FeeDispositionModuleTest is Test {
         assertEq(stray.balanceOf(owner), 5e18);
     }
 
+    function test_PreviewBelowThresholdDoesNotRevert() public {
+        _fund(1e18);
+        (FeeDispositionModule.Split memory p, uint256 out) = module.previewTrigger();
+        assertEq(p.batch, 0);
+        assertEq(out, 0);
+    }
+
+    // ───────────── TWAP / 三明治 ─────────────
+
+    function test_RevertWhen_TriggeredBeforeFirstWindow() public {
+        FeeDispositionModule fresh = _deploy(cfg);
+        ptc.mint(address(fresh), 60_000e18);
+        vm.prank(bob);
+        vm.expectRevert(FeeDispositionModule.TwapUnavailable.selector);
+        fresh.trigger(0);
+        vm.warp(block.timestamp + cfg.twapWindow);
+        vm.prank(bob);
+        fresh.trigger(0);
+    }
+
+    function test_AtomicSandwichIsRejected() public {
+        _fund(60_000e18);
+        SandwichAttacker attacker = new SandwichAttacker(module, ptc, usdt, router);
+        // 攻击者先用 300k PTC 砸价（约 −11%），再在同一笔交易里调 trigger(0)
+        ptc.mint(address(attacker), 300_000e18);
+        vm.expectPartialRevert(FeeDispositionModule.PriceDeviatesFromTwap.selector);
+        attacker.attack(300_000e18);
+        assertEq(module.triggerCount(), 0, "nothing disposed at a manipulated price");
+    }
+
+    function test_SmallMoveWithinDeviationPasses() public {
+        _fund(60_000e18);
+        SandwichAttacker attacker = new SandwichAttacker(module, ptc, usdt, router);
+        // 20k PTC 只把价格推低约 0.8%，在 10% 容忍内：正常市场波动不应阻塞机制
+        ptc.mint(address(attacker), 20_000e18);
+        attacker.attack(20_000e18);
+        assertEq(module.triggerCount(), 1);
+    }
+
+    function test_ManipulationHeldAcrossWindowIsStillCaughtByOldSlot() public {
+        // 攻击者砸价后立刻 updateOracle，试图让「新」观测点带上被操纵的价格；
+        // 新槽不够老时合约会退回旧槽（部署时的干净价格），仍然拒绝
+        _fund(60_000e18);
+        SandwichAttacker attacker = new SandwichAttacker(module, ptc, usdt, router);
+        ptc.mint(address(attacker), 300_000e18);
+        attacker.dumpOnly(300_000e18);
+        module.updateOracle();
+        vm.prank(bob);
+        vm.expectPartialRevert(FeeDispositionModule.PriceDeviatesFromTwap.selector);
+        module.trigger(0);
+    }
+
+    function test_UpdateOracleSpamDoesNotStarveReference() public {
+        // 每分钟 update 一次，持续两个窗口：newest 不够老时不会被覆盖，参考点始终存在
+        for (uint256 i = 0; i < 60; i++) {
+            vm.warp(block.timestamp + 60);
+            module.updateOracle();
+        }
+        _fund(60_000e18);
+        vm.prank(bob);
+        module.trigger(0);
+        assertEq(module.triggerCount(), 1);
+    }
+
+    function test_TwapDisabledWhenWindowZero() public {
+        FeeDispositionModule.Config memory c = cfg;
+        c.twapWindow = 0;
+        vm.prank(owner);
+        module.setConfig(c);
+        FeeDispositionModule fresh = _deploy(c);
+        ptc.mint(address(fresh), 60_000e18);
+        vm.prank(bob);
+        fresh.trigger(0); // 无需等待窗口
+        assertEq(fresh.triggerCount(), 1);
+    }
+
+    function test_TwapPriceView() public view {
+        (uint256 price, uint32 age) = module.twapPrice();
+        assertGe(age, cfg.twapWindow);
+        // 池子 38.2k USDT / 5.1M PTC ≈ 0.00749 USDT/PTC（Q112 定点）
+        assertApproxEqRel(price, POOL_USDT * 2 ** 112 / POOL_PTC, 0.0001e18);
+    }
+
     function test_ApprovalsResetAfterRun() public {
         _fund(60_000e18);
         vm.prank(bob);
         module.trigger(0);
         assertEq(ptc.allowance(address(module), address(router)), 0);
         assertEq(usdt.allowance(address(module), address(router)), 0);
+    }
+}
+
+/// @dev 原子三明治：同一笔交易里 砸价 → trigger(0) → 买回。合约调用者就能做到，无需区块打包权
+contract SandwichAttacker {
+    FeeDispositionModule immutable module;
+    MockERC20 immutable ptc;
+    MockERC20 immutable usdt;
+    MockRouter immutable router;
+
+    constructor(FeeDispositionModule m, MockERC20 p, MockERC20 u, MockRouter r) {
+        module = m;
+        ptc = p;
+        usdt = u;
+        router = r;
+    }
+
+    function dumpOnly(uint256 amount) public {
+        ptc.approve(address(router), amount);
+        address[] memory path = new address[](2);
+        path[0] = address(ptc);
+        path[1] = address(usdt);
+        router.swapExactTokensForTokens(amount, 0, path, address(this), block.timestamp);
+    }
+
+    function attack(uint256 amount) external {
+        dumpOnly(amount);
+        module.trigger(0);
+        uint256 u = usdt.balanceOf(address(this));
+        usdt.approve(address(router), u);
+        address[] memory back = new address[](2);
+        back[0] = address(usdt);
+        back[1] = address(ptc);
+        router.swapExactTokensForTokens(u, 0, back, address(this), block.timestamp);
     }
 }

@@ -32,11 +32,13 @@ contract Deploy is Script {
         FeeDispositionModule.Config memory cfg = FeeDispositionModule.Config({
             threshold: vm.envOr("THRESHOLD_PTC", uint256(50_000)) * 1e18,
             maxBatch: vm.envOr("MAX_BATCH_PTC", uint256(0)) * 1e18,
-            minIncentive: vm.envOr("MIN_INCENTIVE_PTC", uint256(150)) * 1e18,
+            minIncentive: vm.envOr("MIN_INCENTIVE_PTC", uint256(30)) * 1e18,
             burnBps: uint16(vm.envOr("BURN_BPS", uint256(3000))),
             callerIncentiveBps: uint16(vm.envOr("CALLER_INCENTIVE_BPS", uint256(30))),
             slippageBps: uint16(vm.envOr("SLIPPAGE_BPS", uint256(150))),
-            minInterval: uint32(vm.envOr("MIN_INTERVAL_SECONDS", uint256(3600)))
+            minInterval: uint32(vm.envOr("MIN_INTERVAL_SECONDS", uint256(3600))),
+            twapWindow: uint32(vm.envOr("TWAP_WINDOW_SECONDS", uint256(1800))),
+            maxTwapDeviationBps: uint16(vm.envOr("MAX_TWAP_DEVIATION_BPS", uint256(300)))
         });
 
         vm.startBroadcast();
@@ -49,5 +51,7 @@ contract Deploy is Script {
         console2.log("lpRecipient:", lpRecipient);
         console2.log("threshold (PTC):", cfg.threshold / 1e18);
         console2.log("minIncentive (PTC):", cfg.minIncentive / 1e18);
+        console2.log("twapWindow (s):", cfg.twapWindow);
+        console2.log("first trigger possible after (unix):", block.timestamp + cfg.twapWindow);
     }
 }

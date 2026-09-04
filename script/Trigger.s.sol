@@ -21,13 +21,15 @@ contract Trigger is Script {
         }
 
         (FeeDispositionModule.Split memory s, uint256 expectedOut) = module.previewTrigger();
-        (,,,,, uint16 slippageBps,) = module.config();
+        (,,,,, uint16 slippageBps,,,) = module.config();
         uint256 minUsdtOut = expectedOut * (10_000 - slippageBps) / 10_000;
         console2.log("batch (PTC wei):", s.batch);
         console2.log("expected USDT out:", expectedOut);
         console2.log("minUsdtOut:", minUsdtOut);
 
         vm.startBroadcast();
+        // 顺手记一个观测点（不够老时是空操作），保证下一轮总有可用的 TWAP 参考
+        module.updateOracle();
         module.trigger(minUsdtOut);
         vm.stopBroadcast();
     }
