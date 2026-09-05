@@ -37,7 +37,7 @@ Matt 已定（不用再问）
 
 工程师待办 / Engineer to-do
 ☐ 1. 逐行审阅 src/FeeDispositionModule.sol（自动、无权限地动钱，按 10-测试规范 §5.4 的标准）
-☐ 2. 用 vault 源码回答上面「资金来源」三个问题
+☑ 2. 资金来源已用 vault 源码确认可行（见实现说明 §6，含后端每日任务规格）——无需再答
 ☐ 3. 决定合约代码放哪个仓库，把本目录整体挪进去（保留提交记录）
 ☐ 4. 在 service-thebook 加两个定时任务：(a) 每日 fee claim 到模块；(b) 每小时 canTrigger → updateOracle → trigger
 ☐ 5. 测试网部署 + BscScan 验证：forge script script/Deploy.s.sol … --verify；lpRecipient 填黑洞地址
@@ -79,7 +79,7 @@ How to write the backend job (mirror script/Trigger.s.sol)
 
 Engineer to-do
 ☐ 1. Review src/FeeDispositionModule.sol line by line (it moves funds automatically and permissionlessly)
-☐ 2. Answer the three funding-path questions above from the vault source
+☑ 2. Funding path confirmed against the vault source (implementation notes §6, with the backend daily-job spec); nothing left to answer
 ☐ 3. Decide which repo hosts the contract code and move this folder in wholesale (keep history)
 ☐ 4. Add two scheduled jobs in service-thebook: (a) daily fee claim to the module; (b) hourly canTrigger → updateOracle → trigger
 ☐ 5. Testnet deploy + BscScan verification: forge script script/Deploy.s.sol … --verify; lpRecipient = dead address

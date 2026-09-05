@@ -88,15 +88,32 @@ HANDOFF 里「gas ≈ $0.3–1」的估算已过时（BSC Maxwell 之后 gas pri
 50k 阈值下按比例激励 = 150 PTC（≈ $1.12），已高于 30 PTC 下限；下限只在 owner 日后把阈值调小时起作用。所有值上线后可用 `setConfig` 调整，无需重新部署。
 `slippageBps` 150 含池子 0.25% 手续费，对 50k 批次（卖出 17.4k PTC，占池子 0.34%）绰绰有余。
 
-## 6. 资金来源：手续费在链下扣，不会自动到合约
+## 6. 资金来源：手续费在链下扣，不会自动到合约 —— **方案 (a) 已用 vault 源码确认可行（2026-09-05）**
 
-（来自 HANDOFF §3，已核对 service-thebook 的 `VptcWithDrawService` / `PTCVaultTools`）赎回时 15% 手续费只在数据库
-`user_vptc_record.feeNumber` 记账，vault 的 `claim()` 签的是**净额**；手续费 PTC 从未离开 vault。PRD 假设的「vault 把手续费转到模块」不存在。
+vault 源码：https://github.com/ThePromptProtocol/ThePromptProtocol-main/blob/main/contracts/PTCReserveVault.sol
+（已核对：主网 0x9e4cEa…e025 的全部选择器与该文件一致，包括之前未解析的 `dailyUsedToday` / `hasWithdrawnToday` / `pendingEmergencyWithdrawal`）。
 
-推荐方案（a）：后端已持有 vault 的 `claimSigner` key，加一个每日任务，把当天已完成赎回的 `feeNumber` 求和，
-签一笔 `claim(to = FeeDispositionModule, amount = feeSum, requestId, deadline)`。不改 vault、不加新 key。
-**需要工程师用 vault 源码确认**：`claim` 是否限制 `to` / `msg.sender`；`perTxCap` / `dailyCap` / 每地址每日一次的限制是否影响；
-合约地址作为 `to` 是否被允许（ERC20 转账到合约没有问题，但要看 vault 有没有 `isContract` 之类的检查）。
+赎回时 15% 手续费只在数据库 `user_vptc_record.feeNumber` 记账，vault 的 `claim()` 签的是**净额**；手续费 PTC 从未离开 vault。
+同仓库里的 `contracts/Vault.sol` 是另一版设计（链上直接扣 15% 转给不可变的 `feeRecipient`），**没有部署**，主网跑的是 PTCReserveVault。
+
+**每日 claim 到模块的三个疑问，逐条对照源码：**
+1. `claim(user, amount, requestId, deadline, signature)`：收款人就是显式参数 `user`，合约只验证 claimSigner 的 EIP-712 签名，**不限制 msg.sender，也不要求 user 与提交者相同**（源码第 189-200 行）。`user = 模块地址` 可行。
+2. 限额（链上实读 2026-09-05）：`perTxCap` = 500,000 PTC，`dailyCap` = 3,000,000 PTC，当日已用 0。每天约 3,000 PTC 的手续费远在限额之内。
+   **同一地址每 UTC 日只能成功 claim 一次**（`_userLastWithdrawDay`，第 261-263 行）—— 所以必须把整天的手续费**合成一笔**，`batchClaim` 里也不能让模块地址出现两次。
+3. 收款用 `safeTransfer(user, amount)`，普通 ERC20 转账，**合约地址可以收**；唯一的地址检查是非零。
+
+主网 fork 测试 `testFork_DailyFeeClaimToModule_ThenTrigger` 在真实 vault 上走通了全流程：签 claim → 模块收到 → 同日第二笔被 `UserDailyLimitReached` 拒绝 → 连续 17 天累计到阈值 → 随机 EOA 触发 → 销毁与 LP 销毁均落地。
+
+**后端每日任务的规格（service-thebook）**
+- 触发时间：每日 UTC 00:10 之后（vault 的「每日」按 `block.timestamp / 1 days` 即 UTC 日计算；避开日界线）。
+- 金额：前一 UTC 日内状态为已完成的赎回记录 `feeNumber` 求和；为 0 则跳过。
+- `requestId`：由日期派生，例如 `keccak256("FEE-DISPOSITION-" + yyyyMMdd)`，天然幂等，重跑不会重复放款（vault 用 `usedRequestId` 防重放）。
+- 签名：与用户提现完全相同的 EIP-712 `ClaimRequest(address user,uint256 amount,bytes32 requestId,uint256 deadline)`，domain `PTCReserveVault` / `1` / chainId 56 / vault 地址；`user = 模块地址`。
+- 提交：relayer 调 `vault.claim(module, amount, requestId, deadline, sig)`。提交前可先查 `vault.hasWithdrawnToday(module)`，为 true 则说明今天已经打过，直接跳过。
+- 记账：把这笔 claim 的 txHash 记回当天的手续费汇总记录，供 Treasury 看板对账（模块的 `FeeDisposed` 事件负责另一头）。
+
+**对 Backing Ratio 的影响**：手续费 PTC 从 vault 转出后，vault 余额会按每天约 3,000 PTC 下降。这部分 PTC 本来就不对应任何用户的 vPTC 债务，
+所以「vault PTC ÷ 流通 vPTC」的分子减少但分母不变，指标会略降——这是真实情况，不是 bug；看板说明里应注明。
 
 ## 7. 安全属性
 
