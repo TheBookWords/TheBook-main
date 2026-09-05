@@ -32,7 +32,7 @@ contract Deploy is Script {
         require(owner != address(0), "OWNER unset");
 
         FeeDispositionModule.Config memory cfg = FeeDispositionModule.Config({
-            threshold: vm.envOr("THRESHOLD_PTC", uint256(50_000)) * 1e18,
+            threshold: vm.envOr("THRESHOLD_PTC", uint256(3_000)) * 1e18,
             maxBatch: vm.envOr("MAX_BATCH_PTC", uint256(0)) * 1e18,
             minIncentive: vm.envOr("MIN_INCENTIVE_PTC", uint256(30)) * 1e18,
             burnBps: uint16(vm.envOr("BURN_BPS", uint256(3000))),

@@ -60,7 +60,7 @@ contract DeployTestnet is Script {
         pair = IPancakeFactory(IPancakeRouter02(TESTNET_ROUTER).factory()).getPair(address(ptc), address(usdt));
 
         FeeDispositionModule.Config memory cfg = FeeDispositionModule.Config({
-            threshold: vm.envOr("THRESHOLD_PTC", uint256(50_000)) * 1e18,
+            threshold: vm.envOr("THRESHOLD_PTC", uint256(3_000)) * 1e18,
             maxBatch: 0,
             minIncentive: vm.envOr("MIN_INCENTIVE_PTC", uint256(30)) * 1e18,
             burnBps: 3000,

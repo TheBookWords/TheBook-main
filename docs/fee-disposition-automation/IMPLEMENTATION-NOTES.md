@@ -84,7 +84,7 @@ HANDOFF 里「gas ≈ $0.3–1」的估算已过时（BSC Maxwell 之后 gas pri
 - 阈值 50,000 PTC ≈ 17 天手续费；激励 = max(50k × 0.3%, 150 PTC) = **150 PTC ≈ $1.12**，减 gas 后 keeper 净赚 ≈ $1.10
 - 阈值 3,000 PTC（一天）：激励 = max(9 PTC, 150 PTC) = 150 PTC，下限主导；此时激励占批次 5%，太贵
 
-脚本默认（**Matt 2026-09-05 已拍板**）：`threshold 50,000 PTC · maxBatch 0 · minIncentive 30 PTC · burnBps 3000 · callerIncentiveBps 30 · slippageBps 150 · minInterval 3600s · twapWindow 1800s · maxTwapDeviationBps 300`。
+脚本默认（**Matt 2026-09-05 拍板，2026-09-06 改试运行阈值**）：`threshold 3,000 PTC（试运行，约一天手续费；跑顺后 setConfig 调到 50,000）· maxBatch 0 · minIncentive 30 PTC · burnBps 3000 · callerIncentiveBps 30 · slippageBps 150 · minInterval 3600s · twapWindow 1800s · maxTwapDeviationBps 300`。
 50k 阈值下按比例激励 = 150 PTC（≈ $1.12），已高于 30 PTC 下限；下限只在 owner 日后把阈值调小时起作用。所有值上线后可用 `setConfig` 调整，无需重新部署。
 `slippageBps` 150 含池子 0.25% 手续费，对 50k 批次（卖出 17.4k PTC，占池子 0.34%）绰绰有余。
 
