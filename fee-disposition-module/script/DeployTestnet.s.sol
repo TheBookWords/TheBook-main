@@ -15,7 +15,11 @@ import {MockERC20} from "../test/mocks/MockERC20.sol";
 ///   forge script script/DeployTestnet.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com \
 ///        --private-key $DEPLOYER_PRIVATE_KEY --broadcast --verify --etherscan-api-key $BSCSCAN_API_KEY
 ///
-///   部署账户需要约 0.05 tBNB（水龙头：https://www.bnbchain.org/en/testnet-faucet）。
+///   部署账户需要约 0.01 tBNB（水龙头：https://www.bnbchain.org/en/testnet-faucet）。
+///   测试网上已有 PTCReserveVault 0x9315c065a6A14C67D8455D5e5982CeeBfA46D0fD（PTC 0xe1e191BC6eF0c8Bedb29f37f647C55667Bb8250d）；
+///   传 PTC=0xe1e1…8250d 复用它，后端每日 claim 就能真的把测试网 vault 里的 PTC 打进模块。
+///   部署者手里的测试网 PTC 可以由 claimSigner 签一张 claim 从测试网 vault 领出来（perTxCap 100 万/笔）；
+///   不足 5.1M 时加 POOL_PTC=1000000 之类缩小池子。
 contract DeployTestnet is Script {
     /// PancakeSwap V2 测试网 router（factory 0x6725F303…7a17，已在链上核对）
     address constant TESTNET_ROUTER = 0xD99D1c33F9fC3444f8101754aBC46c52416550D1;
@@ -29,15 +33,26 @@ contract DeployTestnet is Script {
         address deployer = msg.sender;
         address owner = vm.envOr("OWNER", deployer);
 
+        // 默认与主网池同量级：5.1M PTC / 38.2k USDT，价格 ≈ 0.0075。测试网 PTC 不够时用 POOL_PTC 缩小
+        // （USDT 按同一价格等比缩），模块的单次上限会按实际池深自动收敛，不影响验收。
+        uint256 poolPtc = vm.envOr("POOL_PTC", uint256(5_100_000)) * 1e18;
+        uint256 poolUsdt = poolPtc * 38_200 / 5_100_000;
+
         vm.startBroadcast();
-        ptc = new MockERC20("PromptCoin (testnet)", "tPTC");
+        // 优先复用测试网上已有的 PTC（PTCReserveVault 0x9315…D0fD 持有的 0xe1e1…8250d），
+        // 这样后端的「每日 claim → 模块 → trigger」链路能在测试网完整走通；部署者需持有 ≥ 5.1M 该 PTC。
+        // 不传 PTC 时退化为自建 tPTC，只能测模块本身。
+        address existingPtc = vm.envOr("PTC", address(0));
+        if (existingPtc != address(0)) {
+            ptc = MockERC20(existingPtc);
+            require(IERC20(existingPtc).balanceOf(deployer) >= poolPtc, "deployer lacks testnet PTC for the pool");
+        } else {
+            ptc = new MockERC20("PromptCoin (testnet)", "tPTC");
+            ptc.mint(deployer, poolPtc + 500_000e18); // 多铸 50 万给部署者当「手续费」喂给模块
+        }
         usdt = new MockERC20("Tether (testnet)", "tUSDT");
-        // 与主网池同量级：5.1M PTC / 38.2k USDT，价格 ≈ 0.0075
-        uint256 poolPtc = 5_100_000e18;
-        uint256 poolUsdt = 38_200e18;
-        ptc.mint(deployer, poolPtc + 500_000e18); // 多铸 50 万给部署者当「手续费」喂给模块
         usdt.mint(deployer, poolUsdt);
-        ptc.approve(TESTNET_ROUTER, poolPtc);
+        IERC20(address(ptc)).approve(TESTNET_ROUTER, poolPtc);
         usdt.approve(TESTNET_ROUTER, poolUsdt);
         IPancakeRouter02(TESTNET_ROUTER).addLiquidity(
             address(ptc), address(usdt), poolPtc, poolUsdt, poolPtc, poolUsdt, deployer, block.timestamp + 600
