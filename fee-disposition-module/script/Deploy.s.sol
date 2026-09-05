@@ -14,9 +14,11 @@ contract Deploy is Script {
     address constant USDT = 0x55d398326f99059fF775485246999027B3197955;
     address constant ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
     address constant DEAD = 0x000000000000000000000000000000000000dEaD;
+    address constant MAINNET_OWNER = 0xEeccBF3A2B2BE808C69d3209516a1b7abf7AF81C;
 
     function run() external returns (FeeDispositionModule module) {
-        address owner = vm.envAddress("OWNER");
+        // 主网 owner = Matt 的 MetaMask，与 PTCReserveVault 的 owner 同一地址（2026-09-05 决定）；测试网可用 OWNER 覆盖
+        address owner = vm.envOr("OWNER", MAINNET_OWNER);
         address lpRecipient = vm.envAddress("LP_RECIPIENT");
         address ptc = vm.envOr("PTC", PTC);
         address usdt = vm.envOr("USDT", USDT);
