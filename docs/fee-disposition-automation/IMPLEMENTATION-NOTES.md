@@ -117,7 +117,7 @@ vault 源码：https://github.com/ThePromptProtocol/ThePromptProtocol-main/blob/
 
 ## 7. 安全属性
 
-- `Ownable2Step`（两步转移，避免转错地址）、`ReentrancyGuard`、`Pausable`（紧急停止，只影响 trigger）。**owner = Matt 的 EOA**（2026-09-05 决定，不用多签）
+- `Ownable2Step`（两步转移，避免转错地址）、`ReentrancyGuard`、`Pausable`（紧急停止，只影响 trigger）。**owner = Matt 的 EOA `0xEeccBF3A2B2BE808C69d3209516a1b7abf7AF81C`**（与主网 vault owner 同一地址；2026-09-05 决定，不用多签）
 - **owner 权力的明确边界**（对社区可以这样说）：能调参数（激励下限不超过阈值的 5%，所以最多把一批的 5% 当激励发给调用者）、能换 LP 接收地址（**调用 `lockLpRecipient()` 后永久不能再换**——建议主网部署后立刻锁定到黑洞地址）、能暂停 / 恢复、能救援误转的无关代币。
   **不能**：取走 PTC / USDT / LP（`rescueToken` 三者都拒绝）、放弃所有权（`renounceOwnership` 已禁用，避免暂停后无人能恢复）
 - owner **不能**取走 PTC / USDT（`rescueToken` 明确拒绝这两个 token）—— 否则「不依赖公司私钥」的承诺就是空话
