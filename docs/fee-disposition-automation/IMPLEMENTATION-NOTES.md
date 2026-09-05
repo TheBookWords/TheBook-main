@@ -185,3 +185,16 @@ mock 的 V2 公式与真实 router 一致。
 - `script/Trigger.s.sol`：同样流程，阈值以下 `skip`，否则 `updateOracle()` + `trigger(minUsdtOut)` 成功。
 - 修掉的脚本 bug：bash 的 `read` 在无换行输入时返回非零被 `set -e` 终止；bash 64 位整数对 18 位小数金额静默溢出（`minUsdtOut` 算成一个极小值，等于没有保护）→ 改用 `bc`。**后端用 Java/BigInteger 实现时不会有这个问题，但请注意所有金额都超过 long 的范围。**
 - 公共 RPC 只保留最近 ~100 个区块的状态，anvil fork 必须在一分钟内完成首笔交易；工程师本地复现时建议用带 archive 的付费节点。
+
+## 12. 后端与仓库落地（2026-09-05，周末代工程师完成）
+
+- **service-thebook** 分支 `feat/fee-disposition-automation`（已推到 GitLab，MR 待建）：
+  `FeeDispositionClaimTask`（每日 UTC 00:10 喂料 claim）、`FeeDispositionTriggerTask`（每小时引导触发）、
+  `FeeDispositionModuleTools`（合约只读 + 两个交易）、两张新表 + 两个 `book_config` 键（`src/main/resources/sql/fee-disposition-automation.sql`）。
+  单元测试 4 项通过；`FeeDispositionManualHarnessTest`（设 `MODULE_ADDRESS` 才启用）已对着 anvil 主网 fork 上部署的模块
+  跑通真实 `trigger()`：ABI 解码正确、`minUsdtOut` 与 forge 脚本逐位一致、交易成功 gas 532,697、模块余额归零。
+- **ThePromptProtocol-main**（合约仓库）分支 `feat/fee-disposition-automation`：本项目以 `git subtree` 并入 `fee-disposition-module/`，
+  子模块路径已改到根 `.gitmodules`，在该仓库内 `forge build` 通过。本地位于 `~/ThePromptProtocol/ThePromptProtocol-main`，
+  **尚未推送**（推送 GitHub 需要 Matt 本人操作或授权）。
+- **测试网**：`script/DeployTestnet.s.sol` 在测试网 fork 上模拟通过（自建 tPTC/tUSDT 池 + 模块，约 0.001 tBNB）；
+  真正广播需要一把有 tBNB 的部署私钥，由 Matt / 工程师执行。
